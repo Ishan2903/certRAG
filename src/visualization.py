@@ -96,12 +96,13 @@ def plot_zone_distance_bars(corpus: list[dict[str, Any]], dists: list[float], ou
 
 
 def plot_pipeline_funnel(aggregate_drops: dict[str, int], total: int, out_path: str) -> None:
-    stages = ["Ingest", "1.1 RSA", "1.2 URL", "1.3 Entropy", "1.4 Unicode", "1.5 Intent", "L2 Consensus", "L3 Firewall"]
+    stages = ["Ingest", "1.1 RSA", "1.2 URL", "1.3 Entropy", "1.4 Unicode", "1.5 Intent", "1.6 QPC", "1.7 Inversion", "L2 Consensus", "L3 Firewall"]
     remaining = total
     counts = [total]
-    for layer in ["1.1", "1.2", "1.3", "1.4", "1.5"]:
+    for layer in ["1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"]:
         remaining -= aggregate_drops.get(layer, 0)
         counts.append(remaining)
+    remaining -= aggregate_drops.get("2.3", 0)
     counts.append(remaining)  # L2
     counts.append(remaining)  # L3
 
@@ -139,10 +140,10 @@ def plot_per_attack_asr(results: list[dict[str, Any]], out_path: str) -> None:
 
 
 def plot_sublayer_latency_heatmap(rows: list[dict[str, Any]], out_path: str) -> None:
-    keys = ["layer_1_1_ms", "layer_1_2_ms", "layer_1_3_ms", "layer_1_4_ms", "layer_1_5_ms",
+    keys = ["layer_1_1_ms", "layer_1_2_ms", "layer_1_3_ms", "layer_1_4_ms", "layer_1_5_ms", "layer_1_6_ms", "layer_1_7_ms",
             "layer_2_1_ms", "layer_2_2_ms", "layer_2_3_ms", "layer_3_1_ms", "layer_3_2_ms", "layer_3_3_ms"]
-    labels = ["1.1 RSA", "1.2 URL", "1.3 Ent", "1.4 Uni", "1.5 Int",
-              "2.1 Part", "2.2 LLM", "2.3 Topo", "3.1 Anc", "3.2 Dist", "3.3 Rout"]
+    labels = ["1.1 RSA", "1.2 URL", "1.3 Ent", "1.4 Uni", "1.5 Int", "1.6 QPC", "1.7 Invs",
+              "2.1 Prov", "2.2 Claim", "2.3 Vote", "3.1 Anc", "3.2 Dist", "3.3 Rout"]
     qids = [r["query_id"] for r in rows]
     mat = np.array([[r.get(k, 0) for k in keys] for r in rows])
 
@@ -184,38 +185,40 @@ def plot_entropy_scatter(flows: list[dict[str, Any]], out_path: str) -> None:
 
 
 def plot_pipeline_architecture(out_path: str) -> None:
-    """Static diagram of all 9 sublayers."""
+    """Static diagram of all 13 sublayers."""
     fig, ax = plt.subplots(figsize=(14, 8))
-    ax.set_xlim(0, 14)
+    ax.set_xlim(0, 15)
     ax.set_ylim(0, 10)
     ax.axis("off")
 
     layers = [
         ("LAYER 1: Ingress & Perimeter", 7.5, [
             "1.1 RSA Check", "1.2 URL Masker", "1.3 Entropy Filter",
-            "1.4 Unicode Norm", "1.5 Intent Scan",
+            "1.4 Unicode Norm", "1.5 Intent Scan", "1.6 QPC Check", "1.7 Inversion",
         ]),
-        ("LAYER 2: Isolated Execution", 5.0, [
-            "2.1 Partitioning", "2.2 Parallel Mistral", "2.3 Topological Ejection",
+        ("LAYER 2: Stylometric Consensus", 5.0, [
+            "2.1 Provenance Wts", "2.2 Claim Extract", "2.3 Claim Voting",
         ]),
         ("LAYER 3: Output Firewall", 2.5, [
             "3.1 Anchor Gen", "3.2 Cosine Dist", "3.3 Manifold Route",
         ]),
     ]
     for title, y, subs in layers:
-        ax.add_patch(FancyBboxPatch((0.5, y - 0.8), 13, 1.6, boxstyle="round,pad=0.05",
+        ax.add_patch(FancyBboxPatch((0.5, y - 0.8), 14.0, 1.6, boxstyle="round,pad=0.05",
                                     facecolor="#ecf0f1", edgecolor="#2c3e50", linewidth=2))
         ax.text(0.8, y, title, fontsize=11, fontweight="bold", va="center")
-        sx = 4.5
+        sx = 4.0
+        spacing = 1.4 if len(subs) > 5 else 2.4
+        width = 1.25 if len(subs) > 5 else 2.2
         for s in subs:
-            ax.add_patch(FancyBboxPatch((sx, y - 0.35), 2.2, 0.7, boxstyle="round,pad=0.02",
+            ax.add_patch(FancyBboxPatch((sx, y - 0.35), width, 0.7, boxstyle="round,pad=0.02",
                                         facecolor="#3498db", edgecolor="black"))
-            ax.text(sx + 1.1, y, s, fontsize=7, ha="center", va="center", color="white", fontweight="bold")
-            sx += 2.4
+            ax.text(sx + width / 2.0, y, s, fontsize=6.5, ha="center", va="center", color="white", fontweight="bold")
+            sx += spacing
 
-    ax.annotate("", xy=(7, 6.7), xytext=(7, 7.3), arrowprops=dict(arrowstyle="->", lw=2))
-    ax.annotate("", xy=(7, 4.2), xytext=(7, 4.8), arrowprops=dict(arrowstyle="->", lw=2))
-    ax.set_title("CertRAG 3-Layer / 11-Sublayer Architecture", fontsize=14, fontweight="bold")
+    ax.annotate("", xy=(7.5, 6.7), xytext=(7.5, 7.3), arrowprops=dict(arrowstyle="->", lw=2))
+    ax.annotate("", xy=(7.5, 4.2), xytext=(7.5, 4.8), arrowprops=dict(arrowstyle="->", lw=2))
+    ax.set_title("CertRAG 3-Layer / 13-Sublayer Architecture", fontsize=14, fontweight="bold")
     plt.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -240,8 +243,8 @@ def plot_asr_comparison(results: list[dict[str, Any]], out_path: str) -> None:
 
 def plot_latency_stacked(avg: dict[str, float], out_path: str) -> None:
     fig, ax = plt.subplots(figsize=(10, 5))
-    labels = ["L1.1", "L1.2", "L1.3", "L1.4", "L1.5", "L2.1", "L2.2 LLM", "L2.3", "L3.1", "L3.2", "L3.3"]
-    keys = ["layer_1_1_ms", "layer_1_2_ms", "layer_1_3_ms", "layer_1_4_ms", "layer_1_5_ms",
+    labels = ["L1.1", "L1.2", "L1.3", "L1.4", "L1.5", "L1.6", "L1.7", "L2.1", "L2.2", "L2.3", "L3.1", "L3.2", "L3.3"]
+    keys = ["layer_1_1_ms", "layer_1_2_ms", "layer_1_3_ms", "layer_1_4_ms", "layer_1_5_ms", "layer_1_6_ms", "layer_1_7_ms",
             "layer_2_1_ms", "layer_2_2_ms", "layer_2_3_ms", "layer_3_1_ms", "layer_3_2_ms", "layer_3_3_ms"]
     vals = [avg.get(k, 0) for k in keys]
     colors = plt.cm.tab20(np.linspace(0, 1, len(labels)))
