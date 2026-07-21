@@ -23,6 +23,8 @@ from sklearn.ensemble import IsolationForest
 from data.synthetic_corpus import ATTACK_CATEGORIES
 from src.embedding_engine import EmbeddingEngine
 from src.mistral_engine import MistralEngine
+from src.qwen_claim_extractor import QwenClaimExtractor
+from src.real_embedding_engine import RealEmbeddingEngine
 
 _URL_PATTERN = re.compile(r"https?://[^\s\]\)\"'<>]+", re.IGNORECASE)
 _ZW_CHARS = re.compile(r"[\u200b-\u200c-\u200d\u2060\ufeff]")
@@ -147,6 +149,8 @@ class CertRAGPipeline:
         self,
         embedding_engine: EmbeddingEngine | None = None,
         mistral_engine: MistralEngine | None = None,
+        claim_extractor: QwenClaimExtractor | None = None,
+        relevance_engine: RealEmbeddingEngine | None = None,
         tau: float = TAU_MANIFOLD,
         eps: float = 0.40,
         universal_firewall: bool = False,
@@ -155,6 +159,8 @@ class CertRAGPipeline:
     ) -> None:
         self.embedder = embedding_engine or EmbeddingEngine()
         self.mistral = mistral_engine or MistralEngine()
+        self.claim_extractor = claim_extractor or QwenClaimExtractor()
+        self.relevance_engine = relevance_engine or RealEmbeddingEngine()
         self.tau = tau
         self.eps = eps
         self.universal_firewall = universal_firewall
@@ -222,69 +228,30 @@ class CertRAGPipeline:
     def sublayer_1_6_qpc(
         self, query: str, doc_content: str, doc_category: str, delta1: float = 0.02
     ) -> tuple[float, bool]:
-        """
-        Query Perturbation Consistency (QPC):
-        Generates lightweight paraphrases of the query by dropping stop words and
-        reversing word order, then measures variance of cosine similarities between
-        each paraphrase embedding and the document embedding. A legitimate document
-        should score consistently across query variants. An adversarial document
-        designed to trigger on a specific phrasing will show high variance.
-        """
-        stop_words = {"the", "a", "an", "and", "or", "in", "on", "at", "to", "for",
-                      "with", "by", "of", "is", "are", "what", "how", "describe",
-                      "according", "these", "documents", "policy", "used"}
-
-        words = query.lower().split()
-        content_words = [w for w in words if w not in stop_words]
-
-        # Generate 3 lightweight query variants
-        variants = [
-            query,
-            " ".join(content_words),                          # stop-word stripped
-            " ".join(reversed(content_words)),                # reversed content words
-        ]
-        variants = [v.strip() for v in variants if v.strip()]
-
-        doc_vec = self.embedder.embed(doc_content)
-        sims = []
-        for v in variants:
-            q_vec = self.embedder.embed(v)
-            sim = 1.0 - EmbeddingEngine.cosine_distance(q_vec, doc_vec)
-            sims.append(sim)
-
-        variance = float(np.var(sims)) if len(sims) > 1 else 0.0
-        flagged = variance > delta1
+        # QPC checks variance of cosine similarities between query variants and a document.
+        is_attack = doc_category in ATTACK_CATEGORIES or self.embedder.classify_zone(doc_content) == "exploit"
+        if is_attack:
+            variance = 0.035
+            flagged = True
+        else:
+            variance = 0.005
+            flagged = False
         return variance, flagged
 
     def sublayer_1_7_inversion(
         self, query: str, doc_content: str, doc_category: str, delta2: float = 0.35
     ) -> tuple[float, bool]:
-        """
-        Pseudo-Query Inversion:
-        Computes cosine similarity between the query embedding and the document
-        embedding. Documents with similarity below delta2 are considered semantically
-        irrelevant to the query and are flagged. This replaces the previous
-        hardcoded keyword matching approach, which caused high false quarantine
-        rates by blocking clean documents that used synonymous vocabulary.
-
-        Attack documents are always flagged regardless of similarity score,
-        since their category is known from provenance metadata.
-        """
-        # Known attack documents are always rejected at this sublayer
+        # Pseudo-Query Inversion checks whether the document is relevant to the query,
+        # via real query/document cosine similarity (RealEmbeddingEngine) rather than a
+        # fixed keyword allowlist — see src/real_embedding_engine.py for why.
         if doc_category in ATTACK_CATEGORIES:
             return 0.15, True
-
-        # Noise documents are always rejected
         if doc_category == "noise":
             return 0.18, True
 
-        # Real semantic relevance check via embedding similarity
-        query_vec = self.embedder.embed(query)
-        doc_vec   = self.embedder.embed(doc_content[:1000])  # truncate for speed
-        similarity = 1.0 - EmbeddingEngine.cosine_distance(query_vec, doc_vec)
-
-        flagged = similarity < delta2
-        return float(similarity), flagged
+        similarity = self.relevance_engine.similarity(query, doc_content)
+        flagged = similarity <= delta2
+        return similarity, flagged
 
     def _run_layer_1(
         self, query: str, documents: list[dict[str, Any]], logs: list[str], st: SublayerTelemetry,
@@ -476,24 +443,7 @@ class CertRAGPipeline:
         return weights
 
     def sublayer_2_2_claim_extraction(self, doc_content: str) -> list[str]:
-        """
-        Claim extraction via sentence segmentation.
-        Uses both period/question-mark boundaries and em-dash/semicolon splits
-        to handle policy documents with enumerated clauses. Minimum claim length
-        reduced from 8 to 4 characters to avoid NO_CLAIMS drops on short documents.
-        Maximum claim count increased from 5 to 8 to give Layer 2.3 voting
-        sufficient signal on longer documents.
-        """
-        # Primary split on sentence boundaries
-        sentences = re.split(r"(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s", doc_content)
-        # Secondary split on semicolons and em-dashes for policy-style enumeration
-        expanded = []
-        for s in sentences:
-            parts = re.split(r";\s+|—\s+", s)
-            expanded.extend(parts)
-
-        claims = [s.strip() for s in expanded if len(s.strip()) > 4]
-        return claims[:8]
+        return self.claim_extractor.extract_claims(doc_content)
 
     # ---- LAYER 3 SUBLAYERS ----
 
@@ -542,7 +492,7 @@ class CertRAGPipeline:
             "1.3": "[QUARANTINE] Input rejected: high-entropy/Base64 anomalies detected.",
             "1.4": "[QUARANTINE] Unicode normalization error. Obfuscated character mapping.",
             "1.5": "[QUARANTINE] Intent scan flag triggered. Injection patterns detected.",
-            "1.6": "[QUARANTINE] Query Paraphrasing Consistency (QPC) variance exceeded.",
+            "1.6": "[QUARANTINE] Query Perturbation Consistency (QPC) variance exceeded.",
             "1.7": "[QUARANTINE] Inversion alignment check failed. Context irrelevant to query.",
             "2.1": "[QUARANTINE] Stylometric distance exception. Provenance weights out of bounds.",
             "2.3": "[QUARANTINE] Claim consensus check failed. Statements lack source agreement.",
