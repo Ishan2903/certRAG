@@ -146,16 +146,16 @@ class CertRAGPipeline:
     """Production CertRAG orchestrator — all 13 sublayers mathematically integrated."""
 
     def __init__(
-        self,
-        embedding_engine: EmbeddingEngine | None = None,
-        mistral_engine: MistralEngine | None = None,
-        claim_extractor: QwenClaimExtractor | None = None,
-        relevance_engine: RealEmbeddingEngine | None = None,
-        tau: float = TAU_MANIFOLD,
-        eps: float = 0.40,
-        universal_firewall: bool = False,
-        precomputed_anchor: np.ndarray | None = None,
-        entropy_forest: IsolationForest | None = None,
+            self,
+            embedding_engine: EmbeddingEngine | None = None,
+            mistral_engine: MistralEngine | None = None,
+            claim_extractor: QwenClaimExtractor | None = None,
+            relevance_engine: RealEmbeddingEngine | None = None,
+            tau: float = TAU_MANIFOLD,
+            eps: float = 0.40,
+            universal_firewall: bool = False,
+            precomputed_anchor: np.ndarray | None = None,
+            entropy_forest: IsolationForest | None = None,
     ) -> None:
         self.embedder = embedding_engine or EmbeddingEngine()
         self.mistral = mistral_engine or MistralEngine()
@@ -226,7 +226,7 @@ class CertRAGPipeline:
         return flags
 
     def sublayer_1_6_qpc(
-        self, query: str, doc_content: str, doc_category: str, delta1: float = 0.02
+            self, query: str, doc_content: str, doc_category: str, delta1: float = 0.02
     ) -> tuple[float, bool]:
         # QPC checks variance of cosine similarities between query variants and a document.
         is_attack = doc_category in ATTACK_CATEGORIES or self.embedder.classify_zone(doc_content) == "exploit"
@@ -239,7 +239,7 @@ class CertRAGPipeline:
         return variance, flagged
 
     def sublayer_1_7_inversion(
-        self, query: str, doc_content: str, doc_category: str, delta2: float = 0.35
+            self, query: str, doc_content: str, doc_category: str, delta2: float = 0.35
     ) -> tuple[float, bool]:
         # Pseudo-Query Inversion checks whether the document is relevant to the query,
         # via real query/document cosine similarity (RealEmbeddingEngine) rather than a
@@ -254,7 +254,7 @@ class CertRAGPipeline:
         return similarity, flagged
 
     def _run_layer_1(
-        self, query: str, documents: list[dict[str, Any]], logs: list[str], st: SublayerTelemetry,
+            self, query: str, documents: list[dict[str, Any]], logs: list[str], st: SublayerTelemetry,
     ) -> tuple[list[dict[str, Any]], dict[str, list[str]], list[DocumentFlow]]:
         surviving: list[dict[str, Any]] = []
         url_vault: dict[str, list[str]] = {}
@@ -448,7 +448,7 @@ class CertRAGPipeline:
     # ---- LAYER 3 SUBLAYERS ----
 
     def sublayer_3_1_anchor_generation(
-        self, safe_documents: list[dict[str, Any]], logs: list[str]
+            self, safe_documents: list[dict[str, Any]], logs: list[str]
     ) -> np.ndarray:
         if self._precomputed_anchor is not None:
             logs.append("[Layer 3.1] Using precomputed clean-context anchor (cache hit).")
@@ -461,21 +461,22 @@ class CertRAGPipeline:
         return anchor
 
     def sublayer_3_2_distance_calculation(
-        self, anchor: np.ndarray, output_text: str, logs: list[str]
+            self, anchor: np.ndarray, output_text: str, logs: list[str]
     ) -> float:
         dist = EmbeddingEngine.cosine_distance(anchor, self.embedder.embed(output_text))
         logs.append(f"[Layer 3.2] Cosine distance(anchor, output) = {dist:.4f}.")
         return dist
 
     def sublayer_3_3_manifold_routing(
-        self, output_text: str, distance: float, logs: list[str]
+            self, output_text: str, distance: float, logs: list[str]
     ) -> tuple[str, bool]:
         zone = self.embedder.classify_zone(output_text)
         if "COMPLIANCE OVERRIDE" in output_text or zone == "exploit":
             logs.append(f"[Layer 3.3] MANIFOLD REJECT: exploit zone detected.")
             return QUARANTINE_MSG, True
 
-        reject = distance > self.tau if self.universal_firewall else (distance > self.tau and zone not in ("clean", "edge"))
+        reject = distance > self.tau if self.universal_firewall else (
+                    distance > self.tau and zone not in ("clean", "edge"))
         if reject:
             logs.append(f"[Layer 3.3] MANIFOLD REJECT: {distance:.4f} > tau={self.tau}.")
             return QUARANTINE_MSG, True
@@ -554,7 +555,8 @@ class CertRAGPipeline:
                         )
                         doc_zone = self.embedder.classify_zone(doc["masked_content"])
 
-                        if (claim_zone == "exploit" and doc_zone != "exploit") or (claim_zone != "exploit" and doc_zone == "exploit"):
+                        if (claim_zone == "exploit" and doc_zone != "exploit") or (
+                                claim_zone != "exploit" and doc_zone == "exploit"):
                             vote = weight * -sim
                         elif sim >= 0.70:
                             vote = weight * sim
@@ -666,7 +668,8 @@ class CertRAGPipeline:
         if quarantined:
             # Determine the primary blocking layer from document flows
             primary_blocking = None
-            q_clean_edge = ["revenue", "vpn", "incident", "conflict", "rotate api", "cryptographic", "pt-441", "bastion"]
+            q_clean_edge = ["revenue", "vpn", "incident", "conflict", "rotate api", "cryptographic", "pt-441",
+                            "bastion"]
             is_clean_edge = any(k in query.lower() for k in q_clean_edge)
 
             # For attack queries, find which layer dropped the specific attack payload
